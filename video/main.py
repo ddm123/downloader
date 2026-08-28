@@ -89,17 +89,17 @@ class VideoPageFetcher:
                             async for chunk in resp.aiter_bytes(self.config.chunk_size):
                                 downloaded_size += out_f.write(chunk)
                         if downloaded_size == 0:
-                            print(f"#{index} 分片 {self.shorten_url(url)} 返回 空内容")
+                            tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 返回 空内容")
                             p.unlink(missing_ok=True)
                         return resp  # 成功，返回
-                    print(f"#{index} 分片 {self.shorten_url(url)} 返回 {resp.status_code}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
+                    tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 返回 {resp.status_code}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
             except httpx.RequestError as e:
-                print(f"#{index} 分片 {self.shorten_url(url)} 请求异常: {e}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
+                tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 请求异常: {e}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
 
             # 等待一会再重试
             await asyncio.sleep(wait_seconds)
 
-        print(self.shorten_url(url) + " 重试耗尽，下载失败")
+        tqdm.write(self.shorten_url(url) + " 重试耗尽，下载失败")
         return None  # 重试耗尽
 
     def fetch_with_retry(self, url: str, referer: str|None=None) -> httpx.Response|None:
@@ -246,7 +246,7 @@ class VideoPageFetcher:
                         pbar.update(1)
                     else:
                         if self.config.fill_missing:
-                            print(f"⚠ 分片 {i} 缺失，开始重新去下载缺失的分片")
+                            tqdm.write(f"⚠ 分片 {i} 缺失，开始重新去下载缺失的分片")
                             p.unlink(missing_ok=True)
                             self.download_segments(m3u8_obj, m3u8_url, output_dir, filename)
                             return
