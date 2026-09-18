@@ -438,13 +438,21 @@ if __name__ == "__main__":
 
     while True:
         print(f"\n========== 处理页面: {url} ==========")
-        video_url, video_next_url, link_next = fetcher.get_video_url(url)
+        is_video_url = url.endswith(".m3u8")
+        if is_video_url:
+            video_url = url
+            video_next_url = link_next = ""
+        else:
+            video_url, video_next_url, link_next = fetcher.get_video_url(url)
 
         if video_url:
-            path = Path(urlparse(url).path)
-            filename = path.stem if path.stem else "video"
             result = fetcher.get_segments(video_url, url)
             if result is not None:
+                if is_video_url:
+                    filename = time.strftime("%Y%m%d%H%M%S")
+                else:
+                    path = Path(urlparse(url).path)
+                    filename = path.stem if path.stem else "video"
                 fetcher.download_segments(result[0], result[1], save_dir, filename)
             else:
                 print("下载视频分片列表文件("+video_url+")失败")
