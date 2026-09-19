@@ -1,5 +1,5 @@
 import os
-from typing import Any
+from typing import Any, Callable
 import json
 import time
 import random
@@ -14,6 +14,22 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 import m3u8
 from Crypto.Cipher import AES
+
+def output(msg: str, flag: str|None=None, outputter: Callable|None=None, **kwargs):
+    if flag:
+        flags = {"fail": "\033[31m", "success": "\033[32m", "warning": "\033[33m"}
+        if flag in flags: msg = flags[flag] + msg + "\033[0m"
+    if not outputter: outputter = print
+    outputter(msg, **kwargs)
+
+def output_fail(msg: str, outputter: Callable|None=None, **kwargs):
+    output(msg, "fail", outputter, **kwargs)
+
+def output_success(msg: str, outputter: Callable|None=None, **kwargs):
+    output(msg, "success", outputter, **kwargs)
+
+def output_warning(msg: str, outputter: Callable|None=None, **kwargs):
+    output(msg, "warning", outputter, **kwargs)
 
 # ===================== 配置 =====================
 class Config:
@@ -89,17 +105,19 @@ class VideoPageFetcher:
                             async for chunk in resp.aiter_bytes(self.config.chunk_size):
                                 downloaded_size += out_f.write(chunk)
                         if downloaded_size == 0:
-                            tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 返回 空内容")
+                            output_warning(f"#{index} 分片 {self.shorten_url(url)} 返回 空内容", tqdm.write)
                             p.unlink(missing_ok=True)
+                        elif attempt:
+                            output_success(f"#{index} 分片 {self.shorten_url(url)} 重试 {attempt} 次后成功下载", tqdm.write)
                         return resp  # 成功，返回
-                    tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 返回 {resp.status_code}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
+                    output_fail(f"#{index} 分片 {self.shorten_url(url)} 返回 {resp.status_code}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}", tqdm.write)
             except httpx.RequestError as e:
-                tqdm.write(f"#{index} 分片 {self.shorten_url(url)} 请求异常: {e}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}")
+                output_fail(f"#{index} 分片 {self.shorten_url(url)} 请求异常: {e}，{wait_seconds}秒后重试 {attempt+1}/{max_retries}", tqdm.write)
 
             # 等待一会再重试
             await asyncio.sleep(wait_seconds)
 
-        tqdm.write(self.shorten_url(url) + " 重试耗尽，下载失败")
+        output_fail(self.shorten_url(url) + " 重试耗尽，下载失败", tqdm.write)
         return None  # 重试耗尽
 
     def fetch_with_retry(self, url: str, referer: str|None=None) -> httpx.Response|None:
@@ -112,11 +130,12 @@ class VideoPageFetcher:
             try:
                 resp = self.client.get(url, headers=headers, timeout=self.config.timeout, follow_redirects=True)
                 if resp.status_code == 200:
+                    if attempt: output_success(f"{url} 重试 {attempt} 次后成功")
                     return resp
 
-                print(f"{url} 返回 {resp.status_code}，等待 {self.config.retry_delay} 秒后重试... {attempt+1}/{max_retries}")
+                output_fail(f"{url} 返回 {resp.status_code}，等待 {self.config.retry_delay} 秒后重试... {attempt+1}/{max_retries}")
             except httpx.RequestError as e:
-                print(f"{url} 请求异常: {e}，等待 {self.config.retry_delay} 秒后重试... {attempt+1}/{max_retries}")
+                output_fail(f"{url} 请求异常: {e}，等待 {self.config.retry_delay} 秒后重试... {attempt+1}/{max_retries}")
 
             time.sleep(self.config.retry_delay)
 
@@ -168,7 +187,7 @@ class VideoPageFetcher:
 
         total = len(segments)
         if total == 0:
-            print(f"没有找到任何分片: {filename}")
+            output_warning(f"没有找到任何分片: {filename}")
             return 0
 
         parts_dir = os.path.join(output_dir, ".parts_" + filename)
@@ -215,7 +234,7 @@ class VideoPageFetcher:
 
     def merge_segments(self, m3u8_obj: m3u8.M3U8, m3u8_url: str, segments: list[dict[str, Any]], output_dir: str, parts_dir: str, filename: str):
         if not segments:
-            print(f"没有分片可合并，跳过: {filename}")
+            output_warning(f"没有分片可合并，跳过: {filename}")
             return
 
         video_path = os.path.join(output_dir, f"{filename}.ts")
@@ -246,26 +265,26 @@ class VideoPageFetcher:
                         pbar.update(1)
                     else:
                         if self.config.fill_missing:
-                            tqdm.write(f"⚠ 分片 {i} 缺失，开始重新去下载缺失的分片")
+                            output_fail(f"⚠ 分片 {i} 缺失，开始重新去下载缺失的分片", tqdm.write)
                             p.unlink(missing_ok=True)
                             self.download_segments(m3u8_obj, m3u8_url, output_dir, filename)
                             return
                         else:
-                            print(f"⚠ 分片 {i} 缺失，跳过写入")
+                            output_fail(f"⚠ 分片 {i} 缺失，跳过写入")
 
         if self.config.keep_temp:
             print(f"临时文件保留在: {parts_dir}，可支持断点续传")
         else:
             shutil.rmtree(parts_dir, ignore_errors=True)
 
-        print(f"✅ 视频下载完成: {video_path}")
+        output_success(f"✅ 视频下载完成: {video_path}")
 
     def get_segments(self, url: str, referer: str|None=None, seen_urls: set[str]|None=None) -> tuple[m3u8.M3U8, str, str|None]|None:
         if seen_urls is None:
             seen_urls = set()
 
         if url in seen_urls:
-            print(f"检测到循环引用 M3U8，停止递归: {url}")
+            output_warning(f"检测到循环引用 M3U8，停止递归: {url}")
             return None
         seen_urls.add(url)
 
@@ -310,7 +329,7 @@ class VideoPageFetcher:
         try:
             return m3u8.loads(lines), url, referer
         except Exception as e:
-            print(f"解析 M3U8 失败: {url}, error={e}")
+            output_fail(f"解析 M3U8 失败: {url}, error={e}")
             return None
 
     def get_video_url(self, url: str) -> tuple[str|None, str|None, str|None]:
@@ -354,11 +373,11 @@ class VideoPageFetcher:
                     if link_next:
                         link_next = urljoin(url, link_next)
                 except Exception as e:
-                    print(f"解析 player_aaaa 数据失败: {e}")
+                    output_fail(f"解析 player_aaaa 数据失败: {e}")
             else:
-                print("Could not find the video URL.")
+                output_fail("Could not find the video URL.")
         else:
-            print("Could not find the target <script> tag.")
+            output_fail("Could not find the target <script> tag.")
 
         return video_url, video_next_url, link_next
 
@@ -367,7 +386,7 @@ class VideoPageFetcher:
 
         script = soup.find('script', string=re.compile(r'\bnow\s*=\s*["\']|\bnextPage\s*=\s*["\']'))
         if not script:
-            print("Could not find the target <script> tag.")
+            output_fail("Could not find the target <script> tag.")
             return None, None, None
 
         content = script.string
@@ -375,7 +394,7 @@ class VideoPageFetcher:
         matches = {m[0]: m[2] for m in pattern.findall(content)} # type: ignore
 
         if not matches:
-            print("Could not find the video URL.")
+            output_fail("Could not find the video URL.")
             return None, None, None
 
         return (
@@ -455,11 +474,11 @@ if __name__ == "__main__":
                     filename = path.stem if path.stem else "video"
                 fetcher.download_segments(result[0], result[1], save_dir, filename)
             else:
-                print("下载视频分片列表文件("+video_url+")失败")
+                output_fail("下载视频分片列表文件("+video_url+")失败")
         elif video_url is None:
-            print("请求 " + url + " 失败")
+            output_fail("请求 " + url + " 失败")
         else:
-            print("未获取到视频 M3U8，可能页面结构变化或已失效")
+            output_fail("未获取到视频 M3U8，可能页面结构变化或已失效")
 
         if link_next:
             url = link_next
