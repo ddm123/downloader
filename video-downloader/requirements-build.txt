@@ -1,0 +1,9 @@
+-r requirements.txt
+altgraph==0.17.5
+packaging==26.3
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
+setuptools==84.0.0
+# ============================================
+# 打包命令：
+# python -m PyInstaller --clean --noconfirm --distpath dist --workpath build/work packaging/VideoDownloader.spec
