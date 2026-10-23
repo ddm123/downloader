@@ -7,6 +7,7 @@ import time
 import random
 import shutil
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 import asyncio
@@ -27,6 +28,40 @@ def output_success(msg: str, outputter: Callable):
 
 def output_warning(msg: str, outputter: Callable):
     output(msg, outputter)
+
+
+def _convert_ts_to_mp4(
+    video_path: Path,
+    ffmpeg_path: str,
+    log_callback: Callable[[str], None],
+) -> None:
+    mp4_path = video_path.with_suffix(".mp4")
+    log_callback(f"正在转换为 MP4: {mp4_path}")
+    result = subprocess.run(
+        [
+            ffmpeg_path,
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-n",
+            "-i",
+            str(video_path),
+            "-c",
+            "copy",
+            str(mp4_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        details = result.stderr.strip() or f"ffmpeg 退出码: {result.returncode}"
+        raise RuntimeError(f"转换 MP4 失败 ({video_path}): {details}")
+
+    video_path.unlink()
+    log_callback(f"✅ MP4 转换完成: {mp4_path}")
+    log_callback(f"已删除原 TS 文件: {video_path}")
+
 
 # ===================== 配置 =====================
 class Config:
@@ -437,6 +472,7 @@ def download_video(
     output_dir: str,
     log_callback: Callable[[str], None],
     progress_callback: Callable[[str, int, int], None],
+    ffmpeg_path: str | None = None,
 ) -> None:
     """Download a video and report all output through the GUI callbacks."""
     os.makedirs(output_dir, exist_ok=True)
@@ -464,6 +500,12 @@ def download_video(
                         path = Path(urlparse(url).path)
                         filename = path.stem if path.stem else "video"
                     fetcher.download_segments(result[0], result[1], output_dir, filename)
+                    if ffmpeg_path:
+                        _convert_ts_to_mp4(
+                            Path(output_dir) / f"{filename}.ts",
+                            ffmpeg_path,
+                            fetcher.log,
+                        )
                 else:
                     output_fail("下载视频分片列表文件("+video_url+")失败", fetcher.log)
             elif video_url is None:

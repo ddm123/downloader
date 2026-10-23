@@ -1,4 +1,5 @@
 import queue
+import shutil
 import sys
 import threading
 import traceback
@@ -28,6 +29,9 @@ class DownloaderApp:
         self.events: queue.Queue[tuple] = queue.Queue()
         self.output_dir = tk.StringVar(value=str(Path("videos").resolve()))
         self.status = tk.StringVar(value="就绪")
+        self.ffmpeg_path = shutil.which("ffmpeg")
+        self.auto_convert = tk.BooleanVar(value=False)
+        self.convert_checkbox: ttk.Checkbutton | None = None
 
         self._build_ui()
         self._center_window()
@@ -55,7 +59,20 @@ class DownloaderApp:
         self.browse_button.grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
 
         self.start_button = ttk.Button(content, text="开始下载", command=self._start_download)
-        self.start_button.grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=(2, 10))
+        if self.ffmpeg_path:
+            self.convert_checkbox = ttk.Checkbutton(
+                content,
+                text="自动转换成mp4格式",
+                variable=self.auto_convert,
+            )
+            self.convert_checkbox.grid(row=2, column=0, sticky=tk.W, pady=(2, 10))
+            self.start_button.grid(
+                row=2, column=1, columnspan=2, sticky=tk.EW, pady=(2, 10)
+            )
+        else:
+            self.start_button.grid(
+                row=2, column=0, columnspan=3, sticky=tk.EW, pady=(2, 10)
+            )
 
         log_frame = ttk.LabelFrame(content, text="运行日志", padding=6)
         log_frame.grid(row=3, column=0, columnspan=3, sticky=tk.NSEW)
@@ -93,17 +110,24 @@ class DownloaderApp:
 
         self.start_button.configure(state=tk.DISABLED)
         self.browse_button.configure(state=tk.DISABLED)
+        if self.convert_checkbox is not None:
+            self.convert_checkbox.configure(state=tk.DISABLED)
         self.status.set("正在准备下载…")
         self.progress.configure(value=0, maximum=1)
         self._append_log(f"开始任务：{url}\n保存目录：{output_dir}")
 
+        ffmpeg_path = (
+            self.ffmpeg_path if self.auto_convert.get() else None
+        )
         threading.Thread(
             target=self._download_worker,
-            args=(url, output_dir),
+            args=(url, output_dir, ffmpeg_path),
             daemon=True,
         ).start()
 
-    def _download_worker(self, url: str, output_dir: str) -> None:
+    def _download_worker(
+        self, url: str, output_dir: str, ffmpeg_path: str | None = None
+    ) -> None:
         try:
             download_video(
                 url,
@@ -112,6 +136,7 @@ class DownloaderApp:
                 progress_callback=lambda stage, current, total: self.events.put(
                     ("progress", stage, current, total)
                 ),
+                ffmpeg_path=ffmpeg_path,
             )
             self.events.put(("done",))
         except Exception:
@@ -131,11 +156,15 @@ class DownloaderApp:
                     self.status.set("任务完成")
                     self.start_button.configure(state=tk.NORMAL)
                     self.browse_button.configure(state=tk.NORMAL)
+                    if self.convert_checkbox is not None:
+                        self.convert_checkbox.configure(state=tk.NORMAL)
                 elif event[0] == "error":
                     self._append_log("下载过程中发生错误：\n" + event[1])
                     self.status.set("下载失败，请查看日志")
                     self.start_button.configure(state=tk.NORMAL)
                     self.browse_button.configure(state=tk.NORMAL)
+                    if self.convert_checkbox is not None:
+                        self.convert_checkbox.configure(state=tk.NORMAL)
         except queue.Empty:
             pass
         finally:
